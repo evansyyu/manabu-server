@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 import jwt
 import pytest
 
-from app.auth.tokens import ALGORITHM, decode_access_token, create_access_token
+from app.auth.tokens import ALGORITHM, create_access_token, decode_access_token
 from app.config import settings
 
 
