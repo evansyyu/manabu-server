@@ -46,12 +46,6 @@ async def test_rejects_zero_count(session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_concurrent_reservations_do_not_overlap():
-    """Two real concurrent transactions must not hand out the same numbers.
-
-    Uses its own committing sessions: the shared `session` fixture wraps
-    everything in one transaction, which cannot exhibit lock contention
-    against itself.
-    """
     engine = create_async_engine(settings.database_url, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -61,19 +55,18 @@ async def test_concurrent_reservations_do_not_overlap():
         await setup.commit()
         user_id = user.id
 
-    async def reserve(n: int) -> int:
-        async with factory() as s:
-            first = await reserve_sequences(s, user_id, n)
-            await asyncio.sleep(0.05)
-            await s.commit()
-            return first
+    try:
+        async def reserve(n: int) -> int:
+            async with factory() as s:
+                first = await reserve_sequences(s, user_id, n)
+                await asyncio.sleep(0.05)
+                await s.commit()
+                return first
 
-    results = await asyncio.gather(*(reserve(10) for _ in range(5)))
-
-    assert sorted(results) == [1, 11, 21, 31, 41]
-
-    async with factory() as cleanup:
-        await cleanup.delete(await cleanup.get(User, user_id))
-        await cleanup.commit()
-
-    await engine.dispose()
+        results = await asyncio.gather(*(reserve(10) for _ in range(5)))
+        assert sorted(results) == [1, 11, 21, 31, 41]
+    finally:
+        async with factory() as cleanup:
+            await cleanup.delete(await cleanup.get(User, user_id))
+            await cleanup.commit()
+        await engine.dispose()
