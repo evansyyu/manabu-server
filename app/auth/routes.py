@@ -6,7 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.deps import get_current_user
 from app.auth.identities import find_or_create_user
 from app.auth.oidc import InvalidIdentityToken, verify_identity_token
-from app.auth.refresh import issue_refresh_token, rotate_refresh_token
+from app.auth.refresh import (
+    issue_refresh_token,
+    revoke_refresh_token,
+    rotate_refresh_token,
+)
 from app.auth.schemas import ProviderLoginRequest, RefreshRequest, TokenPair
 from app.auth.tokens import create_access_token
 from app.config import settings
@@ -39,6 +43,21 @@ async def refresh(
         access_token=create_access_token(user_id),
         refresh_token=new_refresh,
     )
+
+
+# NB: must be registered before the catch-all POST /auth/{provider} below, or
+# "logout" would be parsed as a provider name and 404.
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    body: RefreshRequest,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Revokes the presented refresh token. Deliberately unauthenticated —
+    the access token may already be expired when the user signs out, and the
+    refresh token itself is proof of possession. Always 204: the outcome for
+    an unknown token is indistinguishable on purpose."""
+    await revoke_refresh_token(session, body.refresh_token)
+    await session.commit()
 
 
 @router.post("/dev-login", response_model=TokenPair)

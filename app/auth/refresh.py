@@ -62,6 +62,19 @@ async def rotate_refresh_token(
     return existing.user_id, new_raw
 
 
+async def revoke_refresh_token(session: AsyncSession, raw: str) -> None:
+    """Logout: revoke one token. Idempotent and silent — an unknown or already-
+    revoked token is not an error worth telling an attacker about, and the
+    client is about to discard its copy either way."""
+    await session.execute(
+        update(RefreshToken)
+        .where(RefreshToken.token_hash == _hash(raw), RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=datetime.now(UTC))
+        .execution_options(synchronize_session="fetch")
+    )
+    await session.flush()
+
+
 async def _revoke_all_for_user(session: AsyncSession, user_id: uuid.UUID) -> None:
     await session.execute(
         update(RefreshToken)
