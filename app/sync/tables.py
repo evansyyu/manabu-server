@@ -3,8 +3,24 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from app.models import Favorite, Setting
-from app.sync.schemas import FavoriteRow, SettingRow
+from app.models import (
+    Favorite,
+    Setting,
+    SrsBlacklist,
+    SrsItem,
+    SrsReviewLog,
+    StudySet,
+    StudySetWord,
+)
+from app.sync.schemas import (
+    FavoriteRow,
+    SettingRow,
+    SrsBlacklistRow,
+    SrsItemRow,
+    SrsReviewLogRow,
+    StudySetRow,
+    StudySetWordRow,
+)
 
 SETTINGS_KEY_DENYLIST_PREFIXES = ("session_undo_boundary_",)
 
@@ -30,6 +46,17 @@ class SyncedTable:
 TABLES: tuple[SyncedTable, ...] = (
     SyncedTable("favorites", Favorite, FavoriteRow, ("item_type", "item_id")),
     SyncedTable("settings", Setting, SettingRow, ("key",)),
+    SyncedTable("study_sets", StudySet, StudySetRow, ("id",)),
+    SyncedTable(
+        "study_set_words", StudySetWord, StudySetWordRow, ("set_id", "word_id")
+    ),
+    SyncedTable(
+        "srs_item", SrsItem, SrsItemRow, ("category", "item_id", "card_type")
+    ),
+    SyncedTable(
+        "srs_blacklist", SrsBlacklist, SrsBlacklistRow, ("category", "item_id")
+    ),
+    SyncedTable("srs_review_log", SrsReviewLog, SrsReviewLogRow, ("id",)),
 )
 
 TABLES_BY_NAME = {t.name: t for t in TABLES}

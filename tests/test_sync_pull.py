@@ -1,8 +1,7 @@
 import pytest
-from sqlalchemy import select
 
 from app.auth.tokens import create_access_token
-from app.models import Favorite, User
+from app.models import User
 
 BASE = 1786468000000
 
