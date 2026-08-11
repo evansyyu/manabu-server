@@ -9,3 +9,6 @@ class TokenPair(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+class ProviderLoginRequest(BaseModel):
+    identity_token: str

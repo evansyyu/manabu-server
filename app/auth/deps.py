@@ -19,8 +19,10 @@ async def get_current_user(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
     try:
         user_id = decode_access_token(credentials.credentials)
-    except jwt.PyJWTError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+    except jwt.PyJWTError as exc:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Invalid token"
+        ) from exc
 
     user = await session.get(User, user_id)
     if user is None:
