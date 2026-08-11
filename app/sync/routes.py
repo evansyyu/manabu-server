@@ -52,7 +52,7 @@ async def push(
     total = sum(len(rows) for rows in batches.values())
     if total > MAX_BATCH_ROWS:
         raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status.HTTP_413_CONTENT_TOO_LARGE,
             f"Batch of {total} rows exceeds the {MAX_BATCH_ROWS} row limit",
         )
 
@@ -61,7 +61,7 @@ async def push(
     if total == 0:
         state_seq = await reserve_sequences(session, user.id, 0, peek=True)
         await session.commit()
-        return PushResponse(accepted=accepted, server_seq_high=state_seq)
+        return PushResponse(accepted=accepted, highest_reserved_seq=state_seq)
 
     first_seq = await reserve_sequences(session, user.id, total)
 
@@ -86,5 +86,5 @@ async def push(
     )
 
     return PushResponse(
-        accepted=accepted, server_seq_high=first_seq + total - 1
+        accepted=accepted, highest_reserved_seq=first_seq + total - 1
     )
