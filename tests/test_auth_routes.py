@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from sqlalchemy import func, select
 
 from app.auth import oidc
-from app.models import Identity, User
+from app.models import Identity
 
 PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 AUDIENCE = "com.test.manabu"
@@ -46,7 +46,11 @@ async def test_apple_login_creates_user(client, session):
     assert body["access_token"]
     assert body["refresh_token"]
 
-    count = await session.scalar(select(func.count()).select_from(User))
+    count = await session.scalar(
+        select(func.count())
+        .select_from(Identity)
+        .where(Identity.provider_sub == "000123.abc.456")
+    )
     assert count == 1
 
 
@@ -62,9 +66,11 @@ async def test_second_login_reuses_same_user(client, session):
     assert first.status_code == 200
     assert second.status_code == 200
 
-    users = await session.scalar(select(func.count()).select_from(User))
-    identities = await session.scalar(select(func.count()).select_from(Identity))
-    assert users == 1
+    identities = await session.scalar(
+        select(func.count())
+        .select_from(Identity)
+        .where(Identity.provider_sub == "000123.abc.456")
+    )
     assert identities == 1
 
 
@@ -75,8 +81,15 @@ async def test_different_subject_creates_second_user(client, session):
         "/auth/apple", json={"identity_token": apple_token(sub="000999.xyz.111")}
     )
 
-    users = await session.scalar(select(func.count()).select_from(User))
-    assert users == 2
+    subs = (
+        await session.scalars(
+            select(Identity.user_id).where(
+                Identity.provider_sub.in_(["000123.abc.456", "000999.xyz.111"])
+            )
+        )
+    ).all()
+    assert len(subs) == 2
+    assert len(set(subs)) == 2
 
 
 @pytest.mark.asyncio

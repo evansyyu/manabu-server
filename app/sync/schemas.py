@@ -29,4 +29,10 @@ class PushRequest(BaseModel):
 
 class PushResponse(BaseModel):
     accepted: dict[str, list[list[str]]]
-    server_seq_high: int
+    highest_reserved_seq: int = Field(
+        description=(
+            "Diagnostic only. Highest sequence reserved by this push, which "
+            "may belong to no row if a row lost LWW. NOT a pull cursor — "
+            "the cursor comes only from /sync/pull's next_since."
+        )
+    )

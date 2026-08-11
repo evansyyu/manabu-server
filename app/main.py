@@ -4,10 +4,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.routes import router as auth_router
 from app.db import get_session
+from app.sync.routes import router as sync_router
 
 app = FastAPI()
 
 app.include_router(auth_router)
+app.include_router(sync_router)
 
 
 @app.get("/health")
