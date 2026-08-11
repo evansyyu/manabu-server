@@ -32,7 +32,7 @@ Every synced table mirrors its SQLite counterpart plus four server columns:
 | `user_id` | UUID | Tenant key. Indexed on every table; every query filters on it. |
 | `server_seq` | BIGINT | Pull cursor. Assigned per-user on accept. Indexed with `user_id`. |
 | `server_updated_at` | TIMESTAMPTZ | Server receipt time. Authoritative for auditing, never for merging. |
-| `last_device_id` | TEXT | Which device last wrote this row. Used only as an LWW tie-break. |
+| `last_device_id` | TEXT NULL | Provenance only — which device last wrote this row. Recorded from the push envelope, never consulted during merge. The client has no matching column. |
 
 The client's own `updated_at` (integer ms) travels with the row unchanged and
 is the **only** field consulted for conflict resolution.
@@ -104,13 +104,20 @@ so gaps cost nothing.
 
 ### `POST /sync/push`
 
+Tables are **top-level fields**, not a nested `changes` map. Each field name
+matches a `SyncedTable.name` in the registry, which is what lets the route
+resolve batches by attribute lookup and lets Pydantic type every row in a
+single validation pass. All table fields default to `[]`, so a client sends
+only what it has.
+
 ```jsonc
 {
-  "device_id": "uuid-of-this-device",
-  "changes": {
-    "srs_item":  [ { "id": "...", "updated_at": 1736899200000, ... } ],
-    "favorites": [ { "item_type": "kana", "item_id": "\u3042", "updated_at": ..., "deleted_at": null } ]
-  }
+  "device_id": "46a054b2-2498-46a9-8f64-ff184227fbe8",
+  "favorites": [
+    { "item_type": "kana", "item_id": "あ", "created_at": 1786468000000,
+      "updated_at": 1786468000000, "deleted_at": null }
+  ],
+  "srs_item": [ { "category": "kana", "item_id": "あ", "card_type": "default", ... } ]
 }
 ```
 
@@ -118,14 +125,22 @@ Response:
 
 ```jsonc
 {
-  "accepted":        { "srs_item": ["id1", "id2"], "favorites": [] },
-  "server_seq_high": 1147
+  "accepted": {
+    "favorites": [ ["kana", "あ"] ],
+    "srs_item":  []
+  },
+  "highest_reserved_seq": 1147
 }
 ```
 
-- `accepted` lists the natural PKs actually written. A row absent from
-  `accepted` lost LWW — this is a **success**, not an error, and the client
-  advances its watermark regardless.
+- `accepted` maps each table to the natural PKs actually written, **each PK as
+  an ordered list of its components** (favorites key on two columns, `srs_item`
+  on three). A row absent from `accepted` lost LWW — this is a **success**, not
+  an error, and the client advances its watermark regardless.
+- `highest_reserved_seq` is **diagnostic only**. Sequences are reserved before
+  LWW is evaluated, so the highest reserved number may belong to no row at all.
+  It is *not* a pull cursor: using it as one would skip every row another device
+  wrote below it. The cursor comes only from `/sync/pull`'s `next_since`.
 - The entire push is **one transaction**. Partial success is not a state the
   client has to reason about: either the whole batch applied or nothing did
   and the client retries.
@@ -182,39 +197,77 @@ session_undo_boundary_*
 
 ## 5. Merge rules
 
+### The table registry
+
+Every per-table difference lives in one `SyncedTable` entry
+(`app/sync/tables.py`), so push, pull, dedupe, and merge share a single code
+path across all ten tables:
+
+| Field | Purpose |
+|---|---|
+| `name` | Wire field name and `accepted` key. Must match the `PushRequest` attribute. |
+| `model` | SQLAlchemy model, used for the upsert and the pull query. |
+| `row_schema` | Pydantic row model. Its fields also define `wire_columns` — what pull returns — so push and pull cannot drift apart, and server-only columns stay off the wire. |
+| `pk` | Natural PK columns, in order. Combined with `user_id` to form the `ON CONFLICT` target. |
+| `device_owned` | Rollup tables only. Rejects rows whose `device_id` differs from the push envelope's, with `422`. |
+| `watermark_field` | The column LWW compares. `updated_at` everywhere except `srs_item_tombstone`, which has only `deleted_at`. |
+
+Adding a table is one registry entry, one row schema, one model, one
+`PushRequest` field, and a migration. No merge code changes.
+
+`srs_item_tombstone` carries a server-side `updated_at` derived from
+`deleted_at` at push time, so the generic upsert works unchanged. That column
+is not in the row schema, so clients never see it.
+
 ### The one statement that does most of the work
 
 ```sql
-INSERT INTO srs_item (user_id, id, ..., updated_at, server_seq, last_device_id)
+INSERT INTO srs_item (user_id, category, item_id, card_type, ...,
+                      updated_at, server_seq, last_device_id)
 VALUES (...)
-ON CONFLICT (user_id, id) DO UPDATE SET
+ON CONFLICT (user_id, category, item_id, card_type) DO UPDATE SET
   ...,
   updated_at     = EXCLUDED.updated_at,
   server_seq     = EXCLUDED.server_seq,
   last_device_id = EXCLUDED.last_device_id
 WHERE EXCLUDED.updated_at > srs_item.updated_at
-   OR (EXCLUDED.updated_at = srs_item.updated_at
-       AND EXCLUDED.last_device_id > srs_item.last_device_id)
-RETURNING id;
+RETURNING category, item_id, card_type;
 ```
 
 Postgres's conditional upsert *is* the LWW merge. `RETURNING` tells you which
 rows were accepted. The strict `>` is what makes re-pushing an identical batch
 a no-op.
 
-### Tie-break
+### Tie-break: the server wins
 
-Equal `updated_at` from two devices is rare but must resolve **identically on
-every device**, or they diverge permanently. The tie-break is lexicographic
-comparison of `last_device_id`. Any deterministic rule works; both halves must
-implement the same one.
+Two devices can write the same row at the same millisecond. Some rule must make
+every replica pick the same winner, or they diverge permanently. The rule is
+asymmetric:
 
-> **Open decision.** `srs_item` has no `device_id` column in the client
-> schema. Either (a) the server stores `last_device_id` from the push envelope
-> and the client stores the same on pull, or (b) the tie-break uses a
-> content-derived value both sides can compute. (a) is simpler and is assumed
-> above, but it means the v17 client migration adds `last_device_id` to the
-> LWW tables. Confirm before implementing.
+- **Server accepts pushes with strictly `>`.** First arrival wins the tie; the
+  second push is rejected as a no-op.
+- **Clients apply pulled rows with `>=`.** The tie-losing device adopts what the
+  server kept.
+
+Walk the failure it prevents. A and B both write row R at time T. A pushes
+first and the server stores A's version. B pushes; `>` fails against the equal
+timestamp, so the server keeps A's. B then pulls A's row — and if B applied it
+with `>` too, the equal timestamp would lose against B's own local copy and B
+would keep its version forever. `>=` on the pull side is what closes that.
+
+This needs no `last_device_id` on either half and no extra stamping at any
+write site. It works because a single server is the serialization point: the
+winner need not be deterministic *by content*, only deferred to by every
+replica. It encodes the project's core principle — devices own content, the
+server owns ordering.
+
+One replica loses a true tie silently. That is true of every LWW scheme,
+including a `(timestamp, device_id)` pair; this one just costs no schema.
+
+> The server still records `last_device_id` from the push envelope as
+> provenance, because it is free there and useful when debugging. It is
+> **never** read during merge. Adding a matching client column later is a clean
+> additive migration if provenance earns its keep.
 
 ### Per table
 
@@ -222,7 +275,7 @@ implement the same one.
 |---|---|
 | `srs_review_log` | Append-only union. Insert-if-absent; never update. No conflict is possible because rows are immutable except `is_undone`, which is monotonic 0→1 and so merges by LWW trivially. |
 | `srs_daily_counter`, `study_activity` | Union across devices. Each device writes only its own `device_id` rows. Reads SUM across devices. |
-| `srs_item` | LWW on `updated_at`, tie-break on `last_device_id`. |
+| `srs_item` | LWW on `updated_at`. Ties go to whichever push arrived first; see above. |
 | `favorites`, `study_sets`, `study_set_words`, `srs_blacklist` | LWW + `deleted_at` tombstone column (already the row shape). A delete is a normal LWW write that sets `deleted_at`. |
 | `settings` | LWW per key. The PK is `(user_id, key)`, so keys never contend. |
 | `srs_item_tombstone` | Separate table, monotonic. See below. |
@@ -266,7 +319,6 @@ v17 therefore adds only:
 - `srs_review_log.updated_at` — stamped at insert, bumped on the `is_undone`
   flip.
 - `srs_daily_counter.updated_at` — bumped on every counter write.
-- `last_device_id` on the LWW tables, pending the §5 open decision.
 
 After v17, every synced table pushes by `updated_at` **except
 `srs_item_tombstone`**, which has only `deleted_at`. Its watermark is
@@ -285,6 +337,14 @@ keep consistent.
 Push selects `WHERE updated_at > watermark`. Advance the watermark to the
 batch's max `updated_at` on any 2xx — including rows that lost LWW, since a
 loss means the server already holds something newer.
+
+**Advance watermarks on pull as well.** Applying a pulled row copies its
+`updated_at` into the local row. If that value exceeds the table's push
+watermark, the next push ships the row straight back, where the server rejects
+it under `>` — wasted bandwidth for no effect. In steady state that is a few
+rows; on bootstrap it is the entire account history making a return trip, since
+watermarks start at 0. So: in the same transaction that applies a pull batch,
+raise each affected table's watermark to at least the max `updated_at` applied.
 
 > **Known limitation, v1.** Watermarks are wall-clock values. If a device's
 > clock jumps backwards, rows written during the gap have `updated_at` below
@@ -319,21 +379,31 @@ Detected by comparing the incoming `user_id` against the one in `local_meta`.
 
 ---
 
-## 8. Test scenarios (Phase 4, before any client work)
+## 8. Test coverage
 
-1. Push from device A, pull from device B, assert row equality.
-2. LWW: A pushes an older row after B pushed a newer one → B's survives, and
-   A's row appears in neither `accepted` nor any subsequent pull.
-3. Tombstone beats an older item; a recreated item beats an older tombstone.
-4. Idempotency: send the same batch twice → second push accepts nothing and
-   allocates no sequences.
-5. Two devices' `study_activity` rows for the same date both survive.
-6. Pull paging: write 1200 rows, pull with `limit=500`, assert three pages and
-   no duplicates or gaps.
-7. Tenant isolation: user X's push is invisible to user Y's pull.
-8. A device pushing rollup rows for a `device_id` that is not its own → 422.
+Implemented in `tests/test_sync_push.py`, `tests/test_sync_pull.py`,
+`tests/test_sync_special_tables.py`, and `tests/test_seq.py` (53 tests total
+across the server).
 
----
+| Property | Test |
+|---|---|
+| Concurrent pushes never share sequence numbers | `test_concurrent_reservations_do_not_overlap` — five real transactions, genuine lock contention |
+| Re-pushing a batch is a no-op | `test_push_is_idempotent` |
+| Newer wins, older loses | `test_newer_row_wins`, `test_older_row_loses` |
+| Equal timestamps go to first arrival | `test_equal_timestamp_loses` |
+| Duplicate PKs in one batch collapse to the newest | `test_duplicate_pks_in_one_batch` |
+| Device-local settings keys never stored | `test_denied_settings_key_dropped` |
+| Batch cap returns 413 | `test_batch_cap_enforced` |
+| A device cannot write another device's rollups | `test_foreign_device_rollup_rejected` |
+| Two devices' rollups for one day coexist | `test_two_devices_rollups_coexist` |
+| Tombstones merge on `deleted_at` | `test_tombstone_merges_on_deleted_at` |
+| Pull pages cover everything exactly once | `test_paging_covers_everything_once` — 12 rows, limit 5, asserts 3 pages and no duplicates |
+| Server-only columns never reach the wire | `test_server_columns_not_exposed`, `test_tombstone_pull_shape` |
+| One user's rows are invisible to another | `test_tenant_isolation` |
+| Cross-table sequencing in one push | `test_all_tables_in_one_push` |
+
+Still untested, deliberately: bootstrap at realistic scale (needs a seeded
+database), and the client-side apply rules.
 
 ## 9. Deferred
 
