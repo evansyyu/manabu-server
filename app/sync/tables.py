@@ -16,6 +16,16 @@ class SyncedTable:
     row_schema: type[BaseModel]
     pk: tuple[str, ...]
 
+    @property
+    def wire_columns(self) -> tuple[str, ...]:
+        """Columns sent to clients on pull — the push schema's fields.
+
+        Deriving this from row_schema keeps push and pull in lockstep and
+        keeps server-only columns (user_id, server_seq, server_updated_at,
+        last_device_id) off the wire.
+        """
+        return tuple(self.row_schema.model_fields)
+
 
 TABLES: tuple[SyncedTable, ...] = (
     SyncedTable("favorites", Favorite, FavoriteRow, ("item_type", "item_id")),

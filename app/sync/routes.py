@@ -1,15 +1,18 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user
 from app.db import get_session
 from app.models import User
 from app.sync.merge import upsert_rows
-from app.sync.schemas import PushRequest, PushResponse
+from app.sync.pull import fetch_changes
+from app.sync.schemas import PullResponse, PullRow, PushRequest, PushResponse
 from app.sync.seq import reserve_sequences
 from app.sync.tables import TABLES, is_denied_setting_key
+
+MAX_PULL_LIMIT = 500
 
 logger = logging.getLogger(__name__)
 
@@ -87,4 +90,22 @@ async def push(
 
     return PushResponse(
         accepted=accepted, highest_reserved_seq=first_seq + total - 1
+    )
+
+@router.get("/pull", response_model=PullResponse)
+async def pull(
+    since: int = Query(0, ge=0),
+    limit: int = Query(MAX_PULL_LIMIT, ge=1, le=MAX_PULL_LIMIT),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PullResponse:
+    rows, has_more = await fetch_changes(session, user.id, since, limit)
+
+    return PullResponse(
+        rows=[
+            PullRow(table=table.name, server_seq=seq, row=payload)
+            for table, seq, payload in rows
+        ],
+        next_since=rows[-1][1] if rows else since,
+        has_more=has_more,
     )

@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -36,3 +38,14 @@ class PushResponse(BaseModel):
             "the cursor comes only from /sync/pull's next_since."
         )
     )
+
+class PullRow(BaseModel):
+    table: str
+    server_seq: int
+    row: dict[str, Any]
+
+
+class PullResponse(BaseModel):
+    rows: list[PullRow]
+    next_since: int
+    has_more: bool    
