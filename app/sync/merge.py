@@ -32,6 +32,7 @@ async def upsert_rows(
     values = [
         {
             **row.model_dump(),
+            "updated_at": getattr(row, table.watermark_field),
             "user_id": user_id,
             "server_seq": first_seq + i,
             "server_updated_at": now,

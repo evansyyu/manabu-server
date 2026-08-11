@@ -201,3 +201,39 @@ class SrsReviewLog(SyncedMixin, Base):
     prev_reps_since_lapse: Mapped[int] = mapped_column(BigInteger)
     prev_displayed_mastery: Mapped[float] = mapped_column(Float)
     is_undone: Mapped[int] = mapped_column(BigInteger)
+
+class SrsDailyCounter(SyncedMixin, Base):
+    __tablename__ = "srs_daily_counter"
+    __table_args__ = (
+        Index("ix_srs_daily_counter_pull", "user_id", "server_seq"),
+    )
+
+    category: Mapped[str] = mapped_column(String(16), primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    new_count: Mapped[int] = mapped_column(BigInteger)
+    review_count: Mapped[int] = mapped_column(BigInteger)
+
+
+class StudyActivity(SyncedMixin, Base):
+    __tablename__ = "study_activity"
+    __table_args__ = (
+        Index("ix_study_activity_pull", "user_id", "server_seq"),
+    )
+
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    active_ms: Mapped[int] = mapped_column(BigInteger)
+    cards: Mapped[int] = mapped_column(BigInteger)
+
+
+class SrsItemTombstone(SyncedMixin, Base):
+    __tablename__ = "srs_item_tombstone"
+    __table_args__ = (
+        Index("ix_srs_item_tombstone_pull", "user_id", "server_seq"),
+    )
+
+    category: Mapped[str] = mapped_column(String(16), primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    card_type: Mapped[str] = mapped_column(String(32), primary_key=True)
+    deleted_at: Mapped[int] = mapped_column(BigInteger)

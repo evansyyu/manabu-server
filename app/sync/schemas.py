@@ -100,6 +100,34 @@ class SrsReviewLogRow(BaseModel):
     is_undone: int
     updated_at: int
 
+class SrsDailyCounterRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: str = Field(max_length=16)
+    day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    device_id: str = Field(min_length=1, max_length=64)
+    new_count: int
+    review_count: int
+    updated_at: int
+
+
+class StudyActivityRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    device_id: str = Field(min_length=1, max_length=64)
+    active_ms: int
+    cards: int
+    updated_at: int
+
+
+class SrsItemTombstoneRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: str = Field(pattern="^(kana|kanji|word|radical)$")
+    item_id: str = Field(min_length=1, max_length=64)
+    card_type: str = Field(max_length=32)
+    deleted_at: int
 
 class PushRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -112,6 +140,9 @@ class PushRequest(BaseModel):
     srs_item: list[SrsItemRow] = []
     srs_blacklist: list[SrsBlacklistRow] = []
     srs_review_log: list[SrsReviewLogRow] = []
+    srs_daily_counter: list[SrsDailyCounterRow] = []
+    study_activity: list[StudyActivityRow] = []
+    srs_item_tombstone: list[SrsItemTombstoneRow] = []
 
 
 class PushResponse(BaseModel):

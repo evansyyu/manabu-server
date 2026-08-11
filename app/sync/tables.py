@@ -7,8 +7,11 @@ from app.models import (
     Favorite,
     Setting,
     SrsBlacklist,
+    SrsDailyCounter,
     SrsItem,
+    SrsItemTombstone,
     SrsReviewLog,
+    StudyActivity,
     StudySet,
     StudySetWord,
 )
@@ -16,8 +19,11 @@ from app.sync.schemas import (
     FavoriteRow,
     SettingRow,
     SrsBlacklistRow,
+    SrsDailyCounterRow,
     SrsItemRow,
+    SrsItemTombstoneRow,
     SrsReviewLogRow,
+    StudyActivityRow,
     StudySetRow,
     StudySetWordRow,
 )
@@ -31,6 +37,8 @@ class SyncedTable:
     model: type[Any]
     row_schema: type[BaseModel]
     pk: tuple[str, ...]
+    device_owned: bool = False
+    watermark_field: str = "updated_at"
 
     @property
     def wire_columns(self) -> tuple[str, ...]:
@@ -57,6 +65,27 @@ TABLES: tuple[SyncedTable, ...] = (
         "srs_blacklist", SrsBlacklist, SrsBlacklistRow, ("category", "item_id")
     ),
     SyncedTable("srs_review_log", SrsReviewLog, SrsReviewLogRow, ("id",)),
+    SyncedTable(
+        "srs_daily_counter",
+        SrsDailyCounter,
+        SrsDailyCounterRow,
+        ("category", "day", "device_id"),
+        device_owned=True,
+    ),
+    SyncedTable(
+        "study_activity",
+        StudyActivity,
+        StudyActivityRow,
+        ("day", "device_id"),
+        device_owned=True,
+    ),
+    SyncedTable(
+        "srs_item_tombstone",
+        SrsItemTombstone,
+        SrsItemTombstoneRow,
+        ("category", "item_id", "card_type"),
+        watermark_field="deleted_at",
+    ),
 )
 
 TABLES_BY_NAME = {t.name: t for t in TABLES}

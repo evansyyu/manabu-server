@@ -10,7 +10,7 @@ from app.sync.merge import upsert_rows
 from app.sync.pull import fetch_changes
 from app.sync.schemas import PullResponse, PullRow, PushRequest, PushResponse
 from app.sync.seq import reserve_sequences
-from app.sync.tables import TABLES, is_denied_setting_key
+from app.sync.tables import TABLES, SyncedTable, is_denied_setting_key
 
 MAX_PULL_LIMIT = 500
 
@@ -21,18 +21,14 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 MAX_BATCH_ROWS = 500
 
 
-def _dedupe(rows: list, pk: tuple[str, ...]) -> list:
-    """Keep only the newest row per primary key.
-
-    A single INSERT cannot touch the same conflict key twice; Postgres raises
-    "cannot affect row a second time". Clients shouldn't send duplicates, but
-    the server must not 500 if they do.
-    """
+def _dedupe(rows: list, table: SyncedTable) -> list:
     newest: dict[tuple, object] = {}
     for row in rows:
-        key = tuple(getattr(row, col) for col in pk)
+        key = tuple(getattr(row, col) for col in table.pk)
         existing = newest.get(key)
-        if existing is None or row.updated_at > existing.updated_at:
+        if existing is None or getattr(row, table.watermark_field) > getattr(
+            existing, table.watermark_field
+        ):
             newest[key] = row
     return list(newest.values())
 
@@ -50,7 +46,18 @@ async def push(
     ]
 
     for table in TABLES:
-        batches[table.name] = _dedupe(batches[table.name], table.pk)
+        if not table.device_owned:
+            continue
+        for row in batches[table.name]:
+            if row.device_id != body.device_id:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    f"{table.name} row for device {row.device_id!r} cannot be "
+                    f"pushed by device {body.device_id!r}",
+                )
+
+    for table in TABLES:
+        batches[table.name] = _dedupe(batches[table.name], table)
 
     total = sum(len(rows) for rows in batches.values())
     if total > MAX_BATCH_ROWS:
