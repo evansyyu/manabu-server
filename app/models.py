@@ -1,9 +1,18 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 
 
 class Base(DeclarativeBase):
@@ -59,3 +68,47 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+class UserSyncState(Base):
+    __tablename__ = "user_sync_state"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    seq_high: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0"
+    )
+
+
+class SyncedMixin:
+    """Columns every synced table carries. See docs/SYNC_PROTOCOL.md §2."""
+
+    @declared_attr
+    def user_id(cls) -> Mapped[uuid.UUID]:
+        return mapped_column(
+            ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+        )
+
+    updated_at: Mapped[int] = mapped_column(BigInteger)
+    server_seq: Mapped[int] = mapped_column(BigInteger)
+    server_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_device_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+class Favorite(SyncedMixin, Base):
+    __tablename__ = "favorites"
+    __table_args__ = (Index("ix_favorites_pull", "user_id", "server_seq"),)
+
+    item_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[int] = mapped_column(BigInteger)
+    deleted_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
+class Setting(SyncedMixin, Base):
+    __tablename__ = "settings"
+    __table_args__ = (Index("ix_settings_pull", "user_id", "server_seq"),)
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
