@@ -12,3 +12,8 @@ class RefreshRequest(BaseModel):
 
 class ProviderLoginRequest(BaseModel):
     identity_token: str
+    # Apple only: the one-time authorizationCode from the native sheet. When
+    # revocation is configured server-side, it is exchanged for the Apple
+    # refresh token that account deletion later revokes. Optional and ignored
+    # for Google.
+    authorization_code: str | None = None

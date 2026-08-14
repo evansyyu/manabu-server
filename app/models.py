@@ -44,6 +44,11 @@ class Identity(Base):
     provider: Mapped[str] = mapped_column(String(16))
     provider_sub: Mapped[str] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    # Apple only, and only when revocation is configured: the Apple refresh
+    # token obtained by exchanging the sign-in authorizationCode. Held solely
+    # so account deletion can revoke it (guideline 5.1.1(v)); it is never used
+    # to mint sessions.
+    apple_refresh_token: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
