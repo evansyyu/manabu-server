@@ -1,3 +1,4 @@
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -8,6 +9,16 @@ from app.config import settings
 from app.db import get_session
 from app.main import app
 from app.models import User
+from app.rate_limit import limiter
+
+
+@pytest.fixture(autouse=True)
+def disable_rate_limits():
+    """Limits are off for the suite — every test shares one fake client IP,
+    so real limits would make test outcomes depend on execution order. The
+    rate-limit tests opt back in explicitly."""
+    limiter.enabled = False
+    yield
 
 
 @pytest_asyncio.fixture

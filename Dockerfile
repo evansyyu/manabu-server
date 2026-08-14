@@ -22,4 +22,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# --proxy-headers: requests arrive via Railway's edge proxy, so the real
+# client IP is in X-Forwarded-For — this rewrites request.client from it,
+# which per-IP rate limiting depends on (see app/rate_limit.py for why
+# trusting the header is safe behind Railway and when it wouldn't be).
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]

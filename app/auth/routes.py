@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ from app.auth.tokens import create_access_token
 from app.config import settings
 from app.db import get_session
 from app.models import Identity, User
+from app.rate_limit import ACCOUNT_DELETE_LIMIT, LOGIN_LIMIT, REFRESH_LIMIT, limiter
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/refresh", response_model=TokenPair)
+@limiter.limit(REFRESH_LIMIT)
 async def refresh(
+    request: Request,
     body: RefreshRequest,
     session: AsyncSession = Depends(get_session),
 ) -> TokenPair:
@@ -50,7 +53,9 @@ async def refresh(
 # NB: must be registered before the catch-all POST /auth/{provider} below, or
 # "logout" would be parsed as a provider name and 404.
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(LOGIN_LIMIT)
 async def logout(
+    request: Request,
     body: RefreshRequest,
     session: AsyncSession = Depends(get_session),
 ) -> None:
@@ -63,7 +68,10 @@ async def logout(
 
 
 @router.post("/dev-login", response_model=TokenPair)
-async def dev_login(session: AsyncSession = Depends(get_session)) -> TokenPair:
+@limiter.limit(LOGIN_LIMIT)
+async def dev_login(
+    request: Request, session: AsyncSession = Depends(get_session)
+) -> TokenPair:
     if not settings.dev_login_enabled:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
 
@@ -85,7 +93,9 @@ async def me(user: User = Depends(get_current_user)):
 
 
 @router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(ACCOUNT_DELETE_LIMIT)
 async def delete_account(
+    request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> None:
@@ -112,7 +122,9 @@ async def delete_account(
     logger.info("account deleted user=%s", user.id)
 
 @router.post("/{provider}", response_model=TokenPair)
+@limiter.limit(LOGIN_LIMIT)
 async def provider_login(
+    request: Request,
     provider: str,
     body: ProviderLoginRequest,
     session: AsyncSession = Depends(get_session),
