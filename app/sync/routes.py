@@ -7,6 +7,7 @@ from app.auth.deps import get_current_user
 from app.db import get_session
 from app.models import User
 from app.sync.merge import upsert_rows
+from app.sync.pruning import prune_tombstones
 from app.sync.pull import fetch_changes
 from app.sync.schemas import PullResponse, PullRow, PushRequest, PushResponse
 from app.sync.seq import reserve_sequences
@@ -84,6 +85,10 @@ async def push(
             session, table, user.id, body.device_id, rows, next_seq
         )
         next_seq += len(rows)
+
+    # Piggybacked housekeeping: expire this user's >90-day tombstones while
+    # we already hold a write transaction for them (see pruning.py).
+    await prune_tombstones(session, user.id)
 
     await session.commit()
 

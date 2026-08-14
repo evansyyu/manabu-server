@@ -133,7 +133,9 @@ async def provider_login(
         raise HTTPException(status.HTTP_404_NOT_FOUND)
 
     try:
-        verified = await verify_identity_token(provider, body.identity_token)
+        verified = await verify_identity_token(
+            provider, body.identity_token, body.nonce
+        )
     except InvalidIdentityToken as exc:
         logger.warning("Identity token rejected (%s): %s", provider, exc)
         raise HTTPException(

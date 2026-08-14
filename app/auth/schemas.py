@@ -17,3 +17,6 @@ class ProviderLoginRequest(BaseModel):
     # refresh token that account deletion later revokes. Optional and ignored
     # for Google.
     authorization_code: str | None = None
+    # Apple only: the raw nonce whose sha256 the client passed to the native
+    # sheet — the token's `nonce` claim must match its hash (see oidc.py).
+    nonce: str | None = None
