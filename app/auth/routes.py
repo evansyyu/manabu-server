@@ -1,3 +1,5 @@
+import base64
+import binascii
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -13,12 +15,26 @@ from app.auth.refresh import (
     revoke_refresh_token,
     rotate_refresh_token,
 )
-from app.auth.schemas import ProviderLoginRequest, RefreshRequest, TokenPair
+from app.auth.schemas import (
+    AvatarDelete,
+    AvatarImage,
+    AvatarState,
+    AvatarUpload,
+    ProviderLoginRequest,
+    RefreshRequest,
+    TokenPair,
+)
 from app.auth.tokens import create_access_token
 from app.config import settings
 from app.db import get_session
-from app.models import Identity, User
-from app.rate_limit import ACCOUNT_DELETE_LIMIT, LOGIN_LIMIT, REFRESH_LIMIT, limiter
+from app.models import Identity, User, UserAvatar
+from app.rate_limit import (
+    ACCOUNT_DELETE_LIMIT,
+    AVATAR_LIMIT,
+    LOGIN_LIMIT,
+    REFRESH_LIMIT,
+    limiter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +106,102 @@ async def dev_login(
 @router.get("/me")
 async def me(user: User = Depends(get_current_user)):
     return {"user_id": str(user.id), "created_at": user.created_at}
+
+
+# One image per user, client-resized to 512×512 JPEG before upload. The cap
+# is on *bytes* (a 512×512 JPEG is a few tens of KB; half a megabyte is
+# generous) — pixel dimensions are the client's contract, since verifying
+# them server-side would drag in an image decoder for no security gain: the
+# byte cap already bounds storage and bandwidth.
+MAX_AVATAR_BYTES = 512 * 1024
+ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+
+@router.get("/avatar", response_model=AvatarImage)
+@limiter.limit(AVATAR_LIMIT)
+async def get_avatar(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> AvatarImage:
+    row = await session.get(UserAvatar, user.id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No avatar")
+    return AvatarImage(
+        updated_at=row.updated_at,
+        content_type=row.content_type,
+        data_base64=base64.b64encode(row.data).decode("ascii"),
+    )
+
+
+@router.put("/avatar", response_model=AvatarState)
+@limiter.limit(AVATAR_LIMIT)
+async def put_avatar(
+    request: Request,
+    body: AvatarUpload,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> AvatarState:
+    """Stores the image under last-writer-wins: the write is accepted iff its
+    client clock is at least the stored one's (ties go to the writer — the
+    caller is acting on the freshest state it knows). A rejected write returns
+    the winning updated_at so the losing device pulls instead."""
+    if body.content_type not in ALLOWED_AVATAR_TYPES:
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Unsupported image type"
+        )
+    try:
+        data = base64.b64decode(body.data_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid base64") from exc
+    if len(data) == 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty image")
+    if len(data) > MAX_AVATAR_BYTES:
+        raise HTTPException(
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            f"Avatar exceeds {MAX_AVATAR_BYTES} bytes",
+        )
+
+    row = await session.get(UserAvatar, user.id)
+    if row is not None and row.updated_at > body.updated_at:
+        return AvatarState(accepted=False, updated_at=row.updated_at)
+
+    if row is None:
+        session.add(
+            UserAvatar(
+                user_id=user.id,
+                content_type=body.content_type,
+                data=data,
+                updated_at=body.updated_at,
+            )
+        )
+    else:
+        row.content_type = body.content_type
+        row.data = data
+        row.updated_at = body.updated_at
+    await session.commit()
+    return AvatarState(accepted=True, updated_at=body.updated_at)
+
+
+@router.delete("/avatar", response_model=AvatarState)
+@limiter.limit(AVATAR_LIMIT)
+async def delete_avatar(
+    request: Request,
+    body: AvatarDelete,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> AvatarState:
+    """Removal under the same LWW rule as upload: a removal older than the
+    stored image loses to it (a newer picture from another device outranks
+    this device's stale delete)."""
+    row = await session.get(UserAvatar, user.id)
+    if row is None:
+        return AvatarState(accepted=True, updated_at=None)
+    if row.updated_at > body.updated_at:
+        return AvatarState(accepted=False, updated_at=row.updated_at)
+    await session.delete(row)
+    await session.commit()
+    return AvatarState(accepted=True, updated_at=None)
 
 
 @router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)

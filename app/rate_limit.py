@@ -41,3 +41,8 @@ REFRESH_LIMIT = "30/minute"
 
 # Deletion is once-per-account destructive; nobody legitimate does it in a loop.
 ACCOUNT_DELETE_LIMIT = "5/minute"
+
+# Avatar reads/writes: one image per user, fetched on sync and written when
+# the user picks a picture — but the payload is ~half a megabyte, so the
+# ceiling is really about upload bandwidth, not request count.
+AVATAR_LIMIT = "20/minute"

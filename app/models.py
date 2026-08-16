@@ -7,6 +7,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -74,6 +75,28 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+class UserAvatar(Base):
+    """The user's chosen profile picture — exactly one per user (PK is the
+    user id), stored inline as bytes: images are client-resized to 512×512
+    JPEG (tens of KB) and capped at MAX_AVATAR_BYTES in the route, so a bytea
+    column beats an object store the deployment doesn't have. `updated_at` is
+    the client's ms-epoch clock and the whole conflict rule: last writer wins,
+    same convention as the synced tables' LWW. Dies with the user row
+    (CASCADE), so account deletion needs no extra step."""
+
+    __tablename__ = "user_avatar"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    content_type: Mapped[str] = mapped_column(String(64))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[int] = mapped_column(BigInteger)
+    server_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
 
 class UserSyncState(Base):
     __tablename__ = "user_sync_state"

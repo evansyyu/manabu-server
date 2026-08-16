@@ -66,10 +66,17 @@ async def verify_identity_token(
     # token), and sends the raw value here. A token stolen from a log or the
     # wire can't be replayed without the raw nonce that never travels with
     # it. Enforced whenever *either* side carries a nonce, so a legitimate
-    # client can't be downgraded by simply omitting the field — but tokens
-    # from flows without nonce support (Google's native SDK) still verify.
+    # client can't be downgraded by simply omitting the field.
+    #
+    # Google is exempt when the request carries no nonce: its native SDK
+    # mints an internal nonce straight into the token and never exposes the
+    # raw value, so every Google token arrives nonce-stamped with nothing to
+    # echo back — the "both sides" rule rejected every Google sign-in
+    # outright. A Google request that does supply a nonce is still checked
+    # in full, and Apple keeps the strict rule (our client always sends it).
     token_nonce = claims.get("nonce")
-    if raw_nonce is not None or token_nonce is not None:
+    google_sdk_nonce = provider == "google" and raw_nonce is None
+    if not google_sdk_nonce and (raw_nonce is not None or token_nonce is not None):
         if raw_nonce is None or token_nonce is None:
             raise InvalidIdentityToken("Nonce present on only one side")
         hashed = hashlib.sha256(raw_nonce.encode()).hexdigest()

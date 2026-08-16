@@ -68,8 +68,61 @@ async def test_nonce_violations_rejected(client, token_nonce, request_nonce):
 
 @pytest.mark.asyncio
 async def test_no_nonce_anywhere_still_works(client):
-    # Google's native SDK produces nonce-less tokens; they must keep working.
+    # A token without a nonce claim and a request without one verify fine.
     response = await client.post("/auth/apple", json={"identity_token": apple_token()})
+    assert response.status_code == 200
+
+
+GOOGLE_AUDIENCE = "38615096949-test.apps.googleusercontent.com"
+
+
+@pytest.fixture
+def patch_google(monkeypatch):
+    class FakeKey:
+        key = PRIVATE_KEY.public_key()
+
+    monkeypatch.setattr(
+        oidc._google_jwks, "get_signing_key_from_jwt", lambda token: FakeKey()
+    )
+    monkeypatch.setattr(oidc.settings, "google_client_ids", GOOGLE_AUDIENCE)
+
+
+def google_token(nonce: str | None = None) -> str:
+    claims = {
+        "iss": "https://accounts.google.com",
+        "aud": GOOGLE_AUDIENCE,
+        "sub": "10769150350006150715113082367",
+        "exp": int(time.time()) + 600,
+    }
+    if nonce is not None:
+        claims["nonce"] = nonce
+    return jwt.encode(claims, PRIVATE_KEY, algorithm="RS256")
+
+
+@pytest.mark.asyncio
+async def test_google_sdk_nonce_without_request_nonce_accepted(client, patch_google):
+    # Google's native SDK stamps its own nonce into every token and never
+    # exposes the raw value, so the request legitimately carries none — the
+    # both-sides rule must not fire (it used to 401 every Google sign-in).
+    response = await client.post(
+        "/auth/google", json={"identity_token": google_token(nonce="sdk-internal-nonce")}
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_google_request_nonce_still_enforced(client, patch_google):
+    # A Google request that DOES bind a nonce gets the full check.
+    response = await client.post(
+        "/auth/google",
+        json={"identity_token": google_token(nonce=HASHED), "nonce": "wrong-raw"},
+    )
+    assert response.status_code == 401
+
+    response = await client.post(
+        "/auth/google",
+        json={"identity_token": google_token(nonce=HASHED), "nonce": RAW},
+    )
     assert response.status_code == 200
 
 
