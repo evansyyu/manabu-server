@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.routes import router as auth_router
 from app.db import get_session
+from app.diagnostics import router as diagnostics_router
 from app.rate_limit import limiter
 from app.sync.routes import router as sync_router
 
@@ -18,6 +19,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(auth_router)
 app.include_router(sync_router)
+app.include_router(diagnostics_router)
 
 
 @app.get("/health")

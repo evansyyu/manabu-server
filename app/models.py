@@ -265,3 +265,37 @@ class SrsItemTombstone(SyncedMixin, Base):
     item_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     card_type: Mapped[str] = mapped_column(String(32), primary_key=True)
     deleted_at: Mapped[int] = mapped_column(BigInteger)
+
+class CrashReport(Base):
+    """A client-reported JS crash/error, for post-production troubleshooting.
+
+    Deliberately carries no account linkage — the reporter is anonymous by
+    design, matching the server's no-identity posture. `install_id` is a
+    random per-install UUID the client generates, enough to answer "one
+    device in a loop or many devices affected" without naming anyone.
+    `occurred_at` is the client's ms-epoch clock at capture time (reports
+    arrive on the *next* launch — a dying process can't reliably POST), and
+    `received_at` is ours. Text fields are capped in the route, not here.
+    """
+
+    __tablename__ = "crash_reports"
+    __table_args__ = (
+        Index("ix_crash_reports_received_at", "received_at"),
+        Index("ix_crash_reports_install_id", "install_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    install_id: Mapped[str] = mapped_column(String(64))
+    platform: Mapped[str] = mapped_column(String(16))
+    os_version: Mapped[str] = mapped_column(String(32))
+    app_version: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(16))
+    is_fatal: Mapped[bool] = mapped_column()
+    message: Mapped[str] = mapped_column(Text)
+    stack: Mapped[str] = mapped_column(Text)
+    occurred_at: Mapped[int] = mapped_column(BigInteger)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

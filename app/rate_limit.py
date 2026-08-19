@@ -46,3 +46,9 @@ ACCOUNT_DELETE_LIMIT = "5/minute"
 # the user picks a picture — but the payload is ~half a megabyte, so the
 # ceiling is really about upload bandwidth, not request count.
 AVATAR_LIMIT = "20/minute"
+
+# Crash reports: the client flushes its whole disk queue in one batched POST
+# on launch, so a legitimate device makes about one request per boot. The
+# ceiling is for scripts — combined with the batch/size caps in
+# app/diagnostics.py it bounds junk to a trickle.
+CRASH_REPORT_LIMIT = "6/minute"
