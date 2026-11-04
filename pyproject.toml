@@ -1,7 +1,7 @@
 [project]
 name = "manabu-server"
 version = "0.1.0"
-description = "Add your description here"
+description = "Auth and offline-first sync backend for the Manabu Japanese learning app"
 readme = "README.md"
 authors = [
     { name = "GIitchedGadget", email = "90413092+GIitchedGadget@users.noreply.github.com" }
